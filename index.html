@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VN Stock Backtest App - Skystock</title>
+<script src="https://unpkg.com/lightweight-charts@5.3.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root {
+  --bg: #0f1419;
+  --panel: #1a2332;
+  --border: #2d3a4f;
+  --text: #e7ecf3;
+  --muted: #8b9bb4;
+  --accent: #3b82f6;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .sub { color: var(--muted); font-size: 13px; }
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+.sidebar {
+  width: 320px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px;
+  flex-shrink: 0;
+}
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chart-wrap {
+  flex: 1;
+  min-height: 300px;
+  position: relative;
+}
+#chart { width: 100%; height: 100%; }
+.stats-bar {
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.stat { display: flex; flex-direction: column; }
+.stat label { color: var(--muted); font-size: 11px; }
+.stat .val { font-weight: 600; font-size: 15px; }
+.stat .val.pos { color: var(--green); }
+.stat .val.neg { color: var(--red); }
+.section { margin-bottom: 18px; }
+.section h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+label { display: block; font-size: 13px; margin-bottom: 4px; color: var(--muted); }
+input, select, button {
+  width: 100%;
+  background: #0f172a;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+button {
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+button:hover { opacity: 0.9; }
+button.secondary { background: #334155; }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+.ticker-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0f172a;
+}
+.ticker-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.ticker-item:hover, .ticker-item.active { background: #1e293b; }
+.ticker-item .meta { color: var(--muted); font-size: 11px; }
+.trades {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.trade-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.trade-row.win { color: var(--green); }
+.trade-row.loss { color: var(--red); }
+.hidden { display: none; }
+.loading { color: var(--muted); font-size: 13px; padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>VN Stock Backtest</h1>
+  <span class="sub">Skystock · 10 năm dữ liệu HSX/HNX · Chỉ báo tùy chỉnh</span>
+</header>
+<div class="main">
+  <aside class="sidebar">
+    <div class="section">
+      <h3>Dữ liệu</h3>
+      <input type="file" id="zipFile" accept=".zip">
+      <div id="dataStatus" class="loading">Chưa nạp dữ liệu. Vui lòng chọn file zip vn-10y-2016-2026.</div>
+      <input type="text" id="tickerSearch" placeholder="Tìm mã cổ phiếu..." style="margin-top:8px;">
+      <div id="tickerList" class="ticker-list"></div>
+    </div>
+
+    <div class="section">
+      <h3>Chỉ báo (tùy chỉnh)</h3>
+      <div class="row">
+        <div>
+          <label>SMA</label>
+          <input type="number" id="smaPeriod" value="20" min="2" max="200">
+        </div>
+        <div>
+          <label>EMA</label>
+          <input type="number" id="emaPeriod" value="50" min="2" max="200">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>RSI period</label>
+          <input type="number" id="rsiPeriod" value="14" min="2" max="100">
+        </div>
+        <div>
+          <label>RSI Buy <</label>
+          <input type="number" id="rsiBuy" value="30" min="5" max="50">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>RSI Sell ></label>
+          <input type="number" id="rsiSell" value="70" min="50" max="95">
+        </div>
+        <div>
+          <label>BB Period</label>
+          <input type="number" id="bbPeriod" value="20" min="5" max="100">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>BB StdDev</label>
+          <input type="number" id="bbStd" value="2" step="0.1" min="0.5" max="4">
+        </div>
+        <div>
+          <label>CCI Period</label>
+          <input type="number" id="cciPeriod" value="20" min="5" max="100">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>MACD Fast</label>
+          <input type="number" id="macdFast" value="12" min="2">
+        </div>
+        <div>
+          <label>MACD Slow</label>
+          <input type="number" id="macdSlow" value="26" min="5">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Chiến lược Backtest</h3>
+      <label>Loại tín hiệu vào</label>
+      <select id="entryType">
+        <option value="rsi">RSI Oversold (RSI < ngưỡng)</option>
+        <option value="ma_cross">SMA Cross (Close cắt lên SMA)</option>
+        <option value="bb_lower">Chạm BB Lower</option>
+        <option value="cci">CCI < -100</option>
+      </select>
+      <label>Thoát lệnh</label>
+      <select id="exitType">
+        <option value="rsi">RSI Overbought (RSI > ngưỡng)</option>
+        <option value="ma_cross">SMA Cross ngược</option>
+        <option value="hold">Giữ cố định N ngày</option>
+        <option value="bb_upper">Chạm BB Upper</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Hold days (nếu chọn)</label>
+          <input type="number" id="holdDays" value="10" min="1" max="60">
+        </div>
+        <div>
+          <label>Volume filter > x MA20</label>
+          <input type="number" id="volFilter" value="0" step="0.5" min="0" max="5">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Stop Loss %</label>
+          <input type="number" id="sl" value="0" step="0.5" min="0" max="20">
+        </div>
+        <div>
+          <label>Take Profit %</label>
+          <input type="number" id="tp" value="0" step="0.5" min="0" max="50">
+        </div>
+      </div>
+      <button id="runBtn">Chạy Backtest</button>
+      <button id="resetBtn" class="secondary">Reset Chart</button>
+    </div>
+
+    <div class="section">
+      <h3>Tối ưu tham số tự động</h3>
+      <label>Metric tối ưu</label>
+      <select id="optMetric">
+        <option value="pf">Profit Factor</option>
+        <option value="return">Tổng lợi nhuận %</option>
+        <option value="wr">Win Rate %</option>
+        <option value="avg">Avg Return/Lệnh</option>
+      </select>
+      <label>Số tổ hợp tối đa</label>
+      <input type="number" id="optMaxCombos" value="150" min="20" max="500">
+      <button id="optBtn">Chạy tối ưu</button>
+      <button id="optRsiBtn" class="secondary">Tối ưu RSI chuyên sâu</button>
+      <div id="optStatus" class="loading" style="margin-top:4px;"></div>
+      <div id="optResults" style="max-height:180px; overflow-y:auto; font-size:12px; margin-top:8px;"></div>
+    </div>
+
+    <div class="section">
+      <h3>Lệnh gần đây</h3>
+      <div id="trades" class="trades"></div>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="chart-wrap" id="chartWrap">
+      <div id="chart"></div>
+    </div>
+    <div class="stats-bar" id="statsBar">
+      <div class="stat"><label>Tổng lợi nhuận</label><div class="val" id="statReturn">-</div></div>
+      <div class="stat"><label>Win Rate</label><div class="val" id="statWR">-</div></div>
+      <div class="stat"><label>Profit Factor</label><div class="val" id="statPF">-</div></div>
+      <div class="stat"><label>Số lệnh</label><div class="val" id="statTrades">-</div></div>
+      <div class="stat"><label>Max DD</label><div class="val" id="statDD">-</div></div>
+      <div class="stat"><label>Avg Return/Lệnh</label><div class="val" id="statAvg">-</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== Indicator Functions ==========
+function sma(values, period) {
+  const result = new Array(values.length).fill(null);
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += values[i - j];
+    result[i] = sum / period;
+  }
+  return result;
+}
+
+function ema(values, period) {
+  const result = new Array(values.length).fill(null);
+  const k = 2 / (period + 1);
+  let prev = null;
+  for (let i = 0; i < values.length; i++) {
+    if (i < period - 1) continue;
+    if (prev === null) {
+      let sum = 0;
+      for (let j = 0; j < period; j++) sum += values[i - j];
+      prev = sum / period;
+    } else {
+      prev = values[i] * k + prev * (1 - k);
+    }
+    result[i] = prev;
+  }
+  return result;
+}
+
+function rsi(values, period = 14) {
+  const result = new Array(values.length).fill(null);
+  if (values.length < period + 1) return result;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = values[i] - values[i - 1];
+    if (diff >= 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return result;
+}
+
+function bollinger(values, period = 20, stdDev = 2) {
+  const mid = sma(values, period);
+  const upper = new Array(values.length).fill(null);
+  const lower = new Array(values.length).fill(null);
+  for (let i = period - 1; i < values.length; i++) {
+    let sumSq = 0;
+    for (let j = 0; j < period; j++) {
+      const d = values[i - j] - mid[i];
+      sumSq += d * d;
+    }
+    const sd = Math.sqrt(sumSq / period);
+    upper[i] = mid[i] + stdDev * sd;
+    lower[i] = mid[i] - stdDev * sd;
+  }
+  return { mid, upper, lower };
+}
+
+function cci(high, low, close, period = 20) {
+  const result = new Array(close.length).fill(null);
+  const tp = close.map((c, i) => (high[i] + low[i] + c) / 3);
+  const tpSma = sma(tp, period);
+  for (let i = period - 1; i < close.length; i++) {
+    let meanDev = 0;
+    for (let j = 0; j < period; j++) meanDev += Math.abs(tp[i - j] - tpSma[i]);
+    meanDev /= period;
+    result[i] = meanDev === 0 ? 0 : (tp[i] - tpSma[i]) / (0.015 * meanDev);
+  }
+  return result;
+}
+
+function macd(values, fast = 12, slow = 26, signal = 9) {
+  const emaFast = ema(values, fast);
+  const emaSlow = ema(values, slow);
+  const macdLine = emaFast.map((f, i) => (f != null && emaSlow[i] != null) ? f - emaSlow[i] : null);
+  const signalLine = ema(macdLine.map(v => v ?? 0), signal);
+  const hist = macdLine.map((m, i) => (m != null && signalLine[i] != null) ? m - signalLine[i] : null);
+  return { macd: macdLine, signal: signalLine, hist };
+}
+
+function volumeMA(volumes, period = 20) {
+  return sma(volumes, period);
+}
+
+// ========== App State ==========
+let zip = null;
+let manifest = [];
+let currentData = null;
+let chart = null;
+let candleSeries = null;
+let overlaySeries = [];
+
+const $ = id => document.getElementById(id);
+
+// ========== Chart Setup ==========
+function initChart() {
+  const container = $('chart');
+  if (chart) {
+    chart.remove();
+    chart = null;
+  }
+  chart = LightweightCharts.createChart(container, {
+    layout: { background: { color: '#0f1419' }, textColor: '#e7ecf3' },
+    grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#2d3a4f' },
+    timeScale: { borderColor: '#2d3a4f', timeVisible: true },
+    width: container.clientWidth,
+    height: container.clientHeight,
+  });
+  candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: '#22c55e',
+    downColor: '#ef4444',
+    borderUpColor: '#22c55e',
+    borderDownColor: '#ef4444',
+    wickUpColor: '#22c55e',
+    wickDownColor: '#ef4444',
+  });
+  window.addEventListener('resize', () => {
+    if (chart) chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+  });
+}
+
+function clearOverlays() {
+  overlaySeries.forEach(s => chart.removeSeries(s));
+  overlaySeries = [];
+}
+
+function addLine(data, color, title) {
+  const s = chart.addSeries(LightweightCharts.LineSeries, {
+    color,
+    lineWidth: 1.5,
+    title,
+    priceLineVisible: false,
+  });
+  const points = data.map((v, i) => v != null ? { time: currentData.dates[i], value: v } : null).filter(Boolean);
+  s.setData(points);
+  overlaySeries.push(s);
+  return s;
+}
+
+// ========== Data Loading ==========
+async function loadZip(file) {
+  $('dataStatus').textContent = 'Đang giải nén...';
+  zip = await JSZip.loadAsync(file);
+  const manifestFile = zip.file('vn-10y-2016-2026/manifest.csv');
+  if (!manifestFile) {
+    $('dataStatus').textContent = 'Không tìm thấy manifest.csv trong zip.';
+    return;
+  }
+  const text = await manifestFile.async('text');
+  const lines = text.trim().split('\n').slice(1);
+  manifest = lines.map(l => {
+    const [symbol, first, last, rows] = l.split(',');
+    return { symbol, first, last, rows: +rows };
+  }).filter(m => m.symbol && m.rows > 100);
+  $('dataStatus').textContent = `Đã nạp ${manifest.length} mã cổ phiếu.`;
+  renderTickerList(manifest);
+}
+
+async function loadTicker(symbol) {
+  $('dataStatus').textContent = `Đang tải ${symbol}...`;
+  const file = zip.file(`vn-10y-2016-2026/data/${symbol}.csv`);
+  if (!file) {
+    $('dataStatus').textContent = `Không tìm thấy ${symbol}.csv`;
+    return;
+  }
+  const text = await file.async('text');
+  const lines = text.trim().split('\n').slice(1);
+  const dates = [], open = [], high = [], low = [], close = [], volume = [];
+  for (const line of lines) {
+    const [d, o, h, l, c, v] = line.split(',');
+    if (!d || !c) continue;
+    dates.push(d);
+    open.push(+o);
+    high.push(+h);
+    low.push(+l);
+    close.push(+c);
+    volume.push(+v);
+  }
+  currentData = { symbol, dates, open, high, low, close, volume };
+  $('dataStatus').textContent = `${symbol}: ${dates.length} nến (${dates[0]} → ${dates[dates.length-1]})`;
+  drawChart();
+  document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
+  document.querySelector(`[data-symbol="${symbol}"]`)?.classList.add('active');
+}
+
+function renderTickerList(list) {
+  const container = $('tickerList');
+  container.innerHTML = '';
+  list.slice(0, 80).forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'ticker-item';
+    div.dataset.symbol = m.symbol;
+    div.innerHTML = `<b>${m.symbol}</b> <span class="meta">${m.rows} nến · ${m.first.slice(0,7)}→${m.last.slice(0,7)}</span>`;
+    div.onclick = () => loadTicker(m.symbol);
+    container.appendChild(div);
+  });
+  if (list.length > 80) {
+    const more = document.createElement('div');
+    more.style.padding = '6px 10px';
+    more.style.color = 'var(--muted)';
+    more.style.fontSize = '12px';
+    more.textContent = `... và ${list.length - 80} mã khác. Dùng ô tìm kiếm.`;
+    container.appendChild(more);
+  }
+}
+
+// ========== Chart Drawing ==========
+function drawChart() {
+  if (!currentData) return;
+  initChart();
+  const candles = currentData.dates.map((d, i) => ({
+    time: d,
+    open: currentData.open[i],
+    high: currentData.high[i],
+    low: currentData.low[i],
+    close: currentData.close[i],
+  }));
+  candleSeries.setData(candles);
+  chart.timeScale().fitContent();
+  updateIndicators();
+}
+
+function updateIndicators() {
+  if (!currentData || !chart) return;
+  clearOverlays();
+  const { close, high, low, volume } = currentData;
+  const smaP = +$('smaPeriod').value || 20;
+  const emaP = +$('emaPeriod').value || 50;
+  const rsiP = +$('rsiPeriod').value || 14;
+  const bbP = +$('bbPeriod').value || 20;
+  const bbS = +$('bbStd').value || 2;
+
+  const smaVals = sma(close, smaP);
+  const emaVals = ema(close, emaP);
+  const bb = bollinger(close, bbP, bbS);
+
+  addLine(smaVals, '#3b82f6', `SMA${smaP}`);
+  addLine(emaVals, '#f59e0b', `EMA${emaP}`);
+  addLine(bb.upper, '#a855f7', 'BB Upper');
+  addLine(bb.lower, '#a855f7', 'BB Lower');
+}
+
+// ========== Backtest Core (reusable) ==========
+function runBacktestCore(params) {
+  if (!currentData) return { trades: [], metrics: null };
+  const { dates, open, high, low, close, volume } = currentData;
+  const {
+    rsiP = 14, rsiBuy = 30, rsiSell = 70,
+    smaP = 20, bbP = 20, bbS = 2, cciP = 20,
+    holdDays = 10, volFilter = 0, slPct = 0, tpPct = 0,
+    entryType = 'rsi', exitType = 'rsi'
+  } = params;
+
+  const rsiVals = rsi(close, rsiP);
+  const smaVals = sma(close, smaP);
+  const bb = bollinger(close, bbP, bbS);
+  const cciVals = cci(high, low, close, cciP);
+  const volMA = volumeMA(volume, 20);
+
+  const trades = [];
+  let position = null;
+
+  for (let i = 30; i < close.length - 1; i++) {
+    if (volFilter > 0 && (volMA[i] == null || volume[i] < volFilter * volMA[i])) continue;
+
+    if (position) {
+      let exit = false;
+      let exitPrice = close[i];
+      const held = i - position.entryIdx;
+
+      if (exitType === 'rsi' && rsiVals[i] != null && rsiVals[i] > rsiSell) exit = true;
+      if (exitType === 'ma_cross' && smaVals[i] != null && close[i] < smaVals[i] && close[i-1] >= smaVals[i-1]) exit = true;
+      if (exitType === 'hold' && held >= holdDays) exit = true;
+      if (exitType === 'bb_upper' && bb.upper[i] != null && high[i] >= bb.upper[i]) exit = true;
+
+      const ret = (close[i] - position.entryPrice) / position.entryPrice * 100;
+      if (slPct > 0 && ret <= -slPct) { exit = true; exitPrice = position.entryPrice * (1 - slPct/100); }
+      if (tpPct > 0 && ret >= tpPct) { exit = true; exitPrice = position.entryPrice * (1 + tpPct/100); }
+
+      if (exit) {
+        const pnl = (exitPrice - position.entryPrice) / position.entryPrice * 100;
+        trades.push({ entryDate: position.entryDate, exitDate: dates[i], entryPrice: position.entryPrice, exitPrice, pnl, days: held });
+        position = null;
+      }
+    }
+
+    if (!position) {
+      let entry = false;
+      if (entryType === 'rsi' && rsiVals[i] != null && rsiVals[i] < rsiBuy) entry = true;
+      if (entryType === 'ma_cross' && smaVals[i] != null && close[i] > smaVals[i] && close[i-1] <= smaVals[i-1]) entry = true;
+      if (entryType === 'bb_lower' && bb.lower[i] != null && low[i] <= bb.lower[i]) entry = true;
+      if (entryType === 'cci' && cciVals[i] != null && cciVals[i] < -100) entry = true;
+
+      if (entry) {
+        position = { entryIdx: i, entryPrice: close[i], entryDate: dates[i] };
+      }
+    }
+  }
+
+  if (position) {
+    const i = close.length - 1;
+    const pnl = (close[i] - position.entryPrice) / position.entryPrice * 100;
+    trades.push({ entryDate: position.entryDate, exitDate: dates[i], entryPrice: position.entryPrice, exitPrice: close[i], pnl, days: i - position.entryIdx });
+  }
+
+  return { trades, metrics: calcMetrics(trades) };
+}
+
+function calcMetrics(trades) {
+  if (!trades.length) return { totalPnl: 0, wr: 0, pf: 0, avg: 0, maxDD: 0, trades: 0 };
+  const wins = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl <= 0);
+  const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+  const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+  const pf = grossLoss === 0 ? (grossWin > 0 ? 999 : 0) : grossWin / grossLoss;
+  const wr = (wins.length / trades.length * 100);
+  const avg = totalPnl / trades.length;
+
+  let equity = 100, peak = 100, maxDD = 0;
+  trades.forEach(t => {
+    equity *= (1 + t.pnl / 100);
+    if (equity > peak) peak = equity;
+    const dd = (peak - equity) / peak * 100;
+    if (dd > maxDD) maxDD = dd;
+  });
+
+  return { totalPnl, wr, pf, avg, maxDD, trades: trades.length };
+}
+
+function runBacktest() {
+  if (!currentData) {
+    alert('Vui lòng chọn một mã cổ phiếu trước.');
+    return;
+  }
+  const params = getCurrentParams();
+  const { trades } = runBacktestCore(params);
+  displayResults(trades);
+  updateIndicators();
+}
+
+function getCurrentParams() {
+  return {
+    rsiP: +$('rsiPeriod').value || 14,
+    rsiBuy: +$('rsiBuy').value || 30,
+    rsiSell: +$('rsiSell').value || 70,
+    smaP: +$('smaPeriod').value || 20,
+    bbP: +$('bbPeriod').value || 20,
+    bbS: +$('bbStd').value || 2,
+    cciP: +$('cciPeriod').value || 20,
+    holdDays: +$('holdDays').value || 10,
+    volFilter: +$('volFilter').value || 0,
+    slPct: +$('sl').value || 0,
+    tpPct: +$('tp').value || 0,
+    entryType: $('entryType').value,
+    exitType: $('exitType').value,
+  };
+}
+
+// ========== Optimization ==========
+async function runOptimization() {
+  if (!currentData) {
+    alert('Vui lòng chọn mã cổ phiếu trước.');
+    return;
+  }
+  const metric = $('optMetric').value;
+  const maxCombos = +$('optMaxCombos').value || 150;
+  const entryType = $('entryType').value;
+  const exitType = $('exitType').value;
+  const base = getCurrentParams();
+
+  $('optStatus').textContent = 'Đang tạo tổ hợp tham số...';
+  $('optResults').innerHTML = '';
+
+  const ranges = generateParamRanges(entryType, exitType, base);
+  const combos = cartesian(ranges, maxCombos);
+
+  $('optStatus').textContent = `Đang test ${combos.length} tổ hợp...`;
+
+  const results = [];
+  for (let i = 0; i < combos.length; i++) {
+    const params = { ...base, ...combos[i] };
+    const { metrics } = runBacktestCore(params);
+    if (metrics && metrics.trades >= 5) {
+      results.push({ params, metrics, score: getScore(metrics, metric) });
+    }
+    if (i % 20 === 0) {
+      $('optStatus').textContent = `Đã test ${i}/${combos.length}...`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  displayOptResults(results.slice(0, 15), metric);
+  $('optStatus').textContent = `Hoàn tất. Tìm được ${results.length} tổ hợp hợp lệ.`;
+}
+
+function getScore(m, metric) {
+  if (metric === 'pf') return m.pf;
+  if (metric === 'return') return m.totalPnl;
+  if (metric === 'wr') return m.wr;
+  if (metric === 'avg') return m.avg;
+  return m.pf;
+}
+
+function generateParamRanges(entryType, exitType, base) {
+  const ranges = {};
+  if (entryType === 'rsi' || exitType === 'rsi') {
+    ranges.rsiP = [5, 7, 9, 11, 14, 17, 21, 28];
+    ranges.rsiBuy = [10, 15, 20, 25, 30, 35, 40];
+    ranges.rsiSell = [60, 65, 70, 75, 80, 85, 90];
+  }
+  if (entryType === 'ma_cross' || exitType === 'ma_cross') {
+    ranges.smaP = [10, 15, 20, 30, 40, 50, 60];
+  }
+  if (entryType === 'bb_lower' || exitType === 'bb_upper') {
+    ranges.bbP = [10, 15, 20, 25, 30];
+    ranges.bbS = [1.5, 2.0, 2.5];
+  }
+  if (entryType === 'cci') {
+    ranges.cciP = [10, 14, 20, 28, 40];
+  }
+  if (exitType === 'hold') {
+    ranges.holdDays = [5, 8, 10, 15, 20];
+  }
+  ranges.volFilter = [0, 1.5, 2.0, 2.5, 3.0];
+
+  Object.keys(ranges).forEach(k => {
+    if (!ranges[k] || ranges[k].length === 0) delete ranges[k];
+  });
+  return ranges;
+}
+
+function generateRsiOnlyRanges() {
+  return {
+    rsiP: [5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 24, 28],
+    rsiBuy: [8, 10, 12, 15, 18, 20, 22, 25, 28, 30, 32, 35],
+    rsiSell: [60, 65, 68, 70, 72, 75, 78, 80, 82, 85, 90],
+    volFilter: [0, 1.0, 1.5, 2.0, 2.5],
+    holdDays: [5, 8, 10, 12, 15, 20]
+  };
+}
+
+async function runRsiOptimization() {
+  if (!currentData) {
+    alert('Vui lòng chọn mã cổ phiếu trước.');
+    return;
+  }
+  $('entryType').value = 'rsi';
+  $('exitType').value = 'rsi';
+
+  const metric = $('optMetric').value;
+  const maxCombos = Math.min(+$('optMaxCombos').value || 200, 400);
+  const base = getCurrentParams();
+  base.entryType = 'rsi';
+  base.exitType = 'rsi';
+
+  $('optStatus').textContent = 'Đang tạo tổ hợp RSI...';
+  $('optResults').innerHTML = '';
+
+  const ranges = generateRsiOnlyRanges();
+  const combos = cartesian(ranges, maxCombos);
+
+  $('optStatus').textContent = `Đang tối ưu RSI (${combos.length} tổ hợp)...`;
+
+  const results = [];
+  for (let i = 0; i < combos.length; i++) {
+    const params = { ...base, ...combos[i] };
+    const { metrics } = runBacktestCore(params);
+    if (metrics && metrics.trades >= 8) {
+      results.push({ params, metrics, score: getScore(metrics, metric) });
+    }
+    if (i % 15 === 0) {
+      $('optStatus').textContent = `RSI: ${i}/${combos.length}...`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  displayOptResults(results.slice(0, 20), metric);
+  $('optStatus').textContent = `Tối ưu RSI xong. ${results.length} tổ hợp hợp lệ.`;
+}
+
+function cartesian(ranges, max) {
+  const keys = Object.keys(ranges);
+  if (!keys.length) return [{}];
+  let combos = [{}];
+  for (const key of keys) {
+    const next = [];
+    for (const combo of combos) {
+      for (const val of ranges[key]) {
+        next.push({ ...combo, [key]: val });
+        if (next.length >= max * 3) break;
+      }
+      if (next.length >= max * 3) break;
+    }
+    combos = next;
+    if (combos.length > max * 2) combos = combos.slice(0, max * 2);
+  }
+  for (let i = combos.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [combos[i], combos[j]] = [combos[j], combos[i]];
+  }
+  return combos.slice(0, max);
+}
+
+function displayOptResults(results, metric) {
+  const container = $('optResults');
+  container.innerHTML = '';
+  if (!results.length) {
+    container.innerHTML = '<div style="color:var(--muted)">Không tìm thấy tổ hợp đủ lệnh.</div>';
+    return;
+  }
+  const metricLabel = { pf: 'PF', return: 'Return%', wr: 'WR%', avg: 'Avg%' }[metric];
+  results.forEach((r, idx) => {
+    const div = document.createElement('div');
+    div.style.padding = '4px 0';
+    div.style.borderBottom = '1px solid var(--border)';
+    div.style.cursor = 'pointer';
+    const p = r.params;
+    const summary = [];
+    if (p.rsiP) summary.push(`RSI${p.rsiP} ${p.rsiBuy}/${p.rsiSell}`);
+    if (p.smaP) summary.push(`SMA${p.smaP}`);
+    if (p.bbP) summary.push(`BB${p.bbP}/${p.bbS}`);
+    if (p.cciP) summary.push(`CCI${p.cciP}`);
+    if (p.holdDays) summary.push(`Hold${p.holdDays}`);
+    if (p.volFilter) summary.push(`Vol>${p.volFilter}x`);
+    div.innerHTML = `<b>#${idx+1}</b> ${summary.join(' ')} · <span style="color:var(--green)">${metricLabel} ${r.score.toFixed(2)}</span> · ${r.metrics.trades} lệnh`;
+    div.onclick = () => applyParams(p);
+    container.appendChild(div);
+  });
+}
+
+function applyParams(p) {
+  if (p.rsiP) $('rsiPeriod').value = p.rsiP;
+  if (p.rsiBuy) $('rsiBuy').value = p.rsiBuy;
+  if (p.rsiSell) $('rsiSell').value = p.rsiSell;
+  if (p.smaP) $('smaPeriod').value = p.smaP;
+  if (p.bbP) $('bbPeriod').value = p.bbP;
+  if (p.bbS) $('bbStd').value = p.bbS;
+  if (p.cciP) $('cciPeriod').value = p.cciP;
+  if (p.holdDays) $('holdDays').value = p.holdDays;
+  if (p.volFilter != null) $('volFilter').value = p.volFilter;
+  runBacktest();
+  $('optStatus').textContent = 'Đã áp dụng tham số tối ưu. Xem kết quả bên dưới.';
+}
+
+function displayResults(trades) {
+  if (!trades.length) {
+    ['statReturn','statWR','statPF','statTrades','statDD','statAvg'].forEach(id => $(id).textContent = '-');
+    $('trades').innerHTML = '<div style="color:var(--muted)">Không có lệnh nào.</div>';
+    return;
+  }
+
+  const wins = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl <= 0);
+  const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
+  const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+  const pf = grossLoss === 0 ? (grossWin > 0 ? 999 : 0) : grossWin / grossLoss;
+  const wr = (wins.length / trades.length * 100);
+  const avg = totalPnl / trades.length;
+
+  let equity = 100, peak = 100, maxDD = 0;
+  trades.forEach(t => {
+    equity *= (1 + t.pnl / 100);
+    if (equity > peak) peak = equity;
+    const dd = (peak - equity) / peak * 100;
+    if (dd > maxDD) maxDD = dd;
+  });
+
+  $('statReturn').textContent = totalPnl.toFixed(1) + '%';
+  $('statReturn').className = 'val ' + (totalPnl >= 0 ? 'pos' : 'neg');
+  $('statWR').textContent = wr.toFixed(1) + '%';
+  $('statPF').textContent = pf > 99 ? '∞' : pf.toFixed(2);
+  $('statPF').className = 'val ' + (pf >= 1 ? 'pos' : 'neg');
+  $('statTrades').textContent = trades.length;
+  $('statDD').textContent = maxDD.toFixed(1) + '%';
+  $('statDD').className = 'val neg';
+  $('statAvg').textContent = avg.toFixed(2) + '%';
+  $('statAvg').className = 'val ' + (avg >= 0 ? 'pos' : 'neg');
+
+  const container = $('trades');
+  container.innerHTML = '';
+  trades.slice(-20).reverse().forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'trade-row ' + (t.pnl >= 0 ? 'win' : 'loss');
+    div.innerHTML = `<span>${t.entryDate.slice(5)} → ${t.exitDate.slice(5)}</span><span>${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(1)}%</span>`;
+    container.appendChild(div);
+  });
+}
+
+// ========== Events ==========
+$('zipFile').addEventListener('change', e => {
+  if (e.target.files[0]) loadZip(e.target.files[0]);
+});
+
+$('tickerSearch').addEventListener('input', e => {
+  const q = e.target.value.trim().toUpperCase();
+  if (!manifest.length) return;
+  const filtered = q ? manifest.filter(m => m.symbol.includes(q)) : manifest;
+  renderTickerList(filtered);
+});
+
+$('runBtn').addEventListener('click', runBacktest);
+$('resetBtn').addEventListener('click', () => {
+  if (currentData) drawChart();
+});
+$('optBtn').addEventListener('click', runOptimization);
+$('optRsiBtn').addEventListener('click', runRsiOptimization);
+
+['smaPeriod','emaPeriod','rsiPeriod','bbPeriod','bbStd'].forEach(id => {
+  $(id).addEventListener('change', () => { if (currentData) updateIndicators(); });
+});
+
+initChart();
+</script>
+</body>
+</html>
